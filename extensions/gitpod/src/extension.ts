@@ -27,6 +27,7 @@ import * as vscode from 'vscode';
 import { ConsoleLogger, listen as doListen } from 'vscode-ws-jsonrpc';
 import { GitpodPluginModel } from './gitpod-plugin-model';
 import WebSocket = require('ws');
+import { User, WorkspaceInstanceUser } from '@gitpod/gitpod-protocol/lib/protocol';
 
 export async function activate(context: vscode.ExtensionContext) {
 	const supervisorAddr = process.env.SUPERVISOR_ADDR || 'localhost:22999';
@@ -50,7 +51,8 @@ export async function activate(context: vscode.ExtensionContext) {
 		'function:stopWorkspace',
 		'resource:workspace::' + workspaceId + '::get/update',
 		'function:accessCodeSyncStorage',
-		'function:getLoggedInUser'
+		'function:getLoggedInUser',
+		'function:getWorkspaceUsers'
 	]);
 	const pendingServerToken = (async () => {
 		const tokenServiceClient = new TokenServiceClient(supervisorAddr, grpc.credentials.createInsecure());
@@ -98,6 +100,9 @@ export async function activate(context: vscode.ExtensionContext) {
 		});
 	})();
 
+	let owner: User | undefined;
+	const pendingOwner = gitpodService.server.getLoggedInUser();
+	pendingOwner.then(user => owner = user);
 	const pendingGetWorkspace = gitpodService.server.getWorkspace(workspaceId);
 	const pendingInstanceListener = gitpodService.listenToInstance(workspaceId);
 	//#endregion
@@ -134,6 +139,8 @@ export async function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.commands.registerCommand('gitpod.upgradeSubscription', () =>
 		vscode.env.openExternal(vscode.Uri.parse(new GitpodHostUrl(gitpodHost).asUpgradeSubscription().toString()))
 	));
+
+	//#region workspace timeout
 	context.subscriptions.push(vscode.commands.registerCommand('gitpod.ExtendTimeout', async () => {
 		try {
 			const result = await gitpodService.server.setWorkspaceTimeout(workspaceId, '180m');
@@ -188,6 +195,94 @@ export async function activate(context: vscode.ExtensionContext) {
 		update();
 		context.subscriptions.push(listener.onDidChange(update));
 	})();
+	//#endregion
+
+	//#region workspace sharing
+	const sharingStatusBarItem = vscode.window.createStatusBarItem({
+		id: 'gitpod.workspaceSharing',
+		name: 'Click to control the workspace sharing.',
+		alignment: vscode.StatusBarAlignment.Left
+	});
+	context.subscriptions.push(sharingStatusBarItem);
+
+	let participants: WorkspaceInstanceUser[] = [];
+	let participantsPollingTokenSource: vscode.CancellationTokenSource | undefined;
+	const startParticipantsPolling = async () => {
+		if (participantsPollingTokenSource) {
+			return;
+		}
+		participantsPollingTokenSource = new vscode.CancellationTokenSource();
+		const token = participantsPollingTokenSource.token;
+		while (!token.isCancellationRequested) {
+			try {
+				participants = await gitpodService.server.getWorkspaceUsers(workspaceId);
+				updateSharingStatusBarItem();
+			} catch { }
+			if (token.isCancellationRequested) {
+				return;
+			}
+			await new Promise(resolve => setTimeout(resolve, 10000));
+		}
+	};
+	const cancelParticipantsPolling = () => {
+		if (!participantsPollingTokenSource) {
+			return;
+		}
+		participantsPollingTokenSource.cancel();
+		participantsPollingTokenSource = undefined;
+		participants = [];
+		updateSharingStatusBarItem();
+	};
+
+	// TODO how to manage this state properly?
+	let _workspaceShared = false;
+	const setWorkspaceShared = (workspaceShared: boolean) => {
+		_workspaceShared = workspaceShared;
+		vscode.commands.executeCommand('setContext', 'gitpod:workspaceShared', _workspaceShared);
+
+		if (_workspaceShared) {
+			startParticipantsPolling();
+		} else {
+			cancelParticipantsPolling();
+		}
+
+		updateSharingStatusBarItem();
+	};
+
+	const updateSharingStatusBarItem = () => {
+		sharingStatusBarItem.text = _workspaceShared ? `$(organization) ${participants.length}` : '$(live-share)';
+		sharingStatusBarItem.tooltip = _workspaceShared ? participants.map(p => {
+			const name = p.name || 'anonymous';
+			if (p.userId === owner?.id) {
+				return name + ' (owner)';
+			}
+			return name;
+		}).join('\n') + '\nClick to stop sharing' : 'Share Running Workspace';
+		sharingStatusBarItem.command = _workspaceShared ? 'gitpod.workspace.stopSharing' : 'gitpod.share.workspace';
+		sharingStatusBarItem.show();
+	};
+	pendingOwner.then(updateSharingStatusBarItem);
+
+	const controlWorkspaceSharing = async (enable: boolean) => {
+		try {
+			await gitpodService.server.controlAdmission(workspaceId, enable ? 'everyone' : 'owner');
+			setWorkspaceShared(enable);
+		} catch (e) {
+			// TODO license notification
+			throw e;
+		}
+	};
+	context.subscriptions.push(vscode.commands.registerCommand('gitpod.share.workspace', () => controlWorkspaceSharing(true)));
+	context.subscriptions.push(vscode.commands.registerCommand('gitpod.workspace.stopSharing', () => controlWorkspaceSharing(false)));
+
+	(async () => {
+		const listener = await pendingInstanceListener;
+		const update = () => setWorkspaceShared(listener.info.workspace.shareable || false);
+		update();
+		context.subscriptions.push(listener.onDidChange(update));
+	})();
+	//#endregion
+
 	//#endregion
 
 	//#region workspace view
@@ -510,7 +605,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		const needsUserInfo = !session.account;
 		let userInfo: { id: string, accountName: string };
 		if (needsUserInfo) {
-			const user = await gitpodService.server.getLoggedInUser();
+			const user = await pendingOwner;
 			userInfo = {
 				id: user.id,
 				accountName: user.name!

@@ -65,6 +65,16 @@
         "title": "%extendTimeout%"
       },
       {
+        "command": "gitpod.share.workspace",
+        "title": "%shareWorkspace%",
+        "enablement": "!gitpod:workspaceShared"
+      },
+      {
+        "command": "gitpod.workspace.stopSharing",
+        "title": "%stopSharing%",
+        "enablement": "gitpod:workspaceShared"
+      },
+      {
         "command": "gitpod.ports.openBrowser",
         "title": "%openBrowser%",
         "icon": "$(globe)"
@@ -101,8 +111,18 @@
           "group": "gitpod@20"
         },
         {
+          "command": "gitpod.share.workspace",
+          "group": "gitpod@30",
+          "when": "!gitpod:workspaceShared"
+        },
+        {
+          "command": "gitpod.workspace.stopSharing",
+          "group": "gitpod@40",
+          "when": "gitpod:workspaceShared"
+        },
+        {
           "command": "gitpod.stop.ws",
-          "group": "gitpod@30"
+          "group": "gitpod@50"
         }
       ],
       "accounts/context": [
@@ -181,6 +201,16 @@
         {
           "command": "gitpod.ExtendTimeout",
           "group": "navigation@110"
+        },
+        {
+          "command": "gitpod.share.workspace",
+          "group": "navigation@120",
+          "when": "!gitpod:workspaceShared"
+        },
+        {
+          "command": "gitpod.workspace.stopSharing",
+          "group": "navigation@130",
+          "when": "gitpod:workspaceShared"
         }
       ],
       "view/item/context": [
