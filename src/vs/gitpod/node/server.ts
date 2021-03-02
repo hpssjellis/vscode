@@ -1400,18 +1400,18 @@ async function main(): Promise<void> {
 								execArgv: [],
 								silent: true
 							};
-							if (typeof params.port === 'number') {
-								if (params.port !== 0) {
-									opts.execArgv = [
-										'--nolazy',
-										(params.break ? '--inspect-brk=' : '--inspect=') + params.port
-									];
-								} else {
-									// TODO we should return a dynamically allocated port to the client,
-									// it is better to avoid it?
-									opts.execArgv = ['--inspect-port=0'];
-								}
-							}
+							//if (typeof params.port === 'number') {
+							// if (params.port !== 0) {
+							// 	opts.execArgv = [
+							// 		'--nolazy',
+							// 		(params.break ? '--inspect-brk=' : '--inspect=') + params.port
+							// 	];
+							// } else {
+							// 	// TODO we should return a dynamically allocated port to the client,
+							// 	// it is better to avoid it?
+							opts.execArgv = ['--inspect=0'];
+							//}
+							//}
 							const extensionHost = cp.fork(getPathFromAmdModule(require, 'bootstrap-fork'), ['--type=extensionHost', '--uriTransformerPath=' + uriTransformerPath], opts);
 							extensionHost.stdout!.setEncoding('utf8');
 							extensionHost.stderr!.setEncoding('utf8');
